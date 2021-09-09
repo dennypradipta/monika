@@ -72,7 +72,7 @@ jobs:
       - name: Compress all binaries to one zip
         uses: papeloto/action-zip@v1
         with:
-          files: ./dist/*
+          files: dist/monika dist/node_sqlite3.node 
           dest: monika-${{ steps.get_version.outputs.VERSION }}-${{ matrix.platform }}.zip
       - name: Upload binary to release
         uses: svenstaro/upload-release-action@v2
