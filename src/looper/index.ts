@@ -22,9 +22,10 @@
  * SOFTWARE.                                                                      *
  **********************************************************************************/
 
+import Bree from 'bree'
 import { differenceInSeconds } from 'date-fns'
+import path from 'path'
 
-import { doProbe } from '../components/probe'
 import { getContext } from '../context'
 import { Notification } from '../interfaces/notification'
 import { Probe } from '../interfaces/probe'
@@ -41,6 +42,20 @@ let isPaused = false
 let checkSTUNinterval: NodeJS.Timeout
 
 const DISABLE_STUN = -1 // -1 is disable stun checking
+
+// Initiate Bree for Probing in Workers
+const bree = new Bree({
+  root: false,
+  defaultExtension: process.env.NODE_ENV === 'test' ? 'ts' : 'js',
+  jobs: [],
+  logger: log,
+  doRootCheck: false,
+  errorHandler: (error, workerMetadata) => {
+    log.error(error)
+    log.debug(workerMetadata)
+  },
+  outputWorkerMetadata: true,
+})
 
 /**
  * sanitizeProbe sanitize currently mapped probe name, alerts, and threshold
@@ -159,7 +174,7 @@ export function startProbing({
 
   initializeProbeStates(probes)
 
-  const probeInterval = setInterval(() => {
+  const probeInterval = setInterval(async () => {
     if (repeat) {
       const finishedProbe = probes.every((probe) => {
         const context = getProbeContext(probe.id)
@@ -174,7 +189,7 @@ export function startProbing({
     }
 
     if ((isConnectedToSTUNServer && !isPaused) || flags.stun === DISABLE_STUN) {
-      for (const probe of probes) {
+      for await (const probe of probes) {
         const probeState = getProbeState(probe.id)
         const context = getProbeContext(probe.id)
         const diff = differenceInSeconds(new Date(), context.lastFinish)
@@ -184,11 +199,48 @@ export function startProbing({
             continue
           }
 
-          doProbe({
+          // Find existing probing job
+          const existingJob = bree.config.jobs.findIndex(
+            ({ name }) => name === `probing-${probe.id}`
+          )
+
+          // Create the job data
+          const jobData = {
             checkOrder: context.cycle,
             probe,
             notifications,
-          })
+          }
+
+          // If job not found
+          if (existingJob >= 0) {
+            // If the probing job is already created
+            // Update the probing job worker data with the new prepared worker data
+            bree.config.jobs[existingJob] = {
+              ...bree.config.jobs[existingJob],
+              worker: {
+                workerData: {
+                  data: JSON.stringify(jobData),
+                },
+              },
+            }
+          } else {
+            // Create the probing job with the prepared worker data
+            await bree.add({
+              name: `probing-${probe.id}`,
+              interval: `every 10 seconds`,
+              outputWorkerMetadata: true,
+              path: path.resolve(
+                __dirname,
+                `bree/do-probe.${bree.config.defaultExtension}`
+              ),
+              worker: {
+                workerData: {
+                  data: JSON.stringify(jobData),
+                },
+              },
+            })
+            await bree.start(`probing-${probe.id}`)
+          }
         }
       }
     }
