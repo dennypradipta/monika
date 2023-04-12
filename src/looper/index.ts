@@ -23,6 +23,8 @@
  **********************************************************************************/
 
 import { differenceInSeconds } from 'date-fns'
+import Bree from 'bree'
+import path from 'path'
 
 import { doProbe } from '../components/probe'
 import { getContext } from '../context'
@@ -36,11 +38,40 @@ import {
 } from '../utils/probe-state'
 import { getPublicIp, isConnectedToSTUNServer } from '../utils/public-ip'
 
+type StartProbingArgs = {
+  probes: Probe[]
+  notifications: Notification[]
+}
+
 export const DEFAULT_THRESHOLD = 5
 let isPaused = false
 let checkSTUNinterval: NodeJS.Timeout
 
 const DISABLE_STUN = -1 // -1 is disable stun checking
+
+const bree = new Bree({
+  root: false,
+  defaultExtension: process.env.NODE_ENV === 'test' ? 'ts' : 'js',
+  jobs: [],
+  logger: log,
+  doRootCheck: false,
+  removeCompleted: true,
+  errorHandler: (error, workerMetadata) => {
+    log.error(error)
+    log.debug(workerMetadata)
+  },
+  outputWorkerMetadata: true,
+  workerMessageHandler({ message }) {
+    const { success, state, probes, notifications } = JSON.parse(message)
+    log.debug(JSON.stringify({ success, state }))
+    setTimeout(() => {
+      startProbing({
+        probes,
+        notifications,
+      })
+    }, 1000)
+  },
+})
 
 /**
  * sanitizeProbe sanitize currently mapped probe name, alerts, and threshold
@@ -149,20 +180,39 @@ export function setPauseProbeInterval(pause: boolean): void {
   if (pause) log.info('Probing is paused')
 }
 
-type StartProbingArgs = {
-  probes: Probe[]
-  notifications: Notification[]
-}
-
 export function startProbing({
   probes,
   notifications,
-}: StartProbingArgs): () => void {
+}: StartProbingArgs): (() => void) | undefined {
   const flags = getContext().flags
   const repeat = flags.repeat
 
-  initializeProbeStates(probes)
+  // If experimental probing flag is active, use Bree
+  if (flags['experimental-probing']) {
+    // Create the report job with the prepared worker data
+    bree
+      .add({
+        name: 'experimental-probing',
+        outputWorkerMetadata: true,
+        path: path.resolve(
+          __dirname,
+          `bree/start-probing.${bree.config.defaultExtension}`
+        ),
+        worker: {
+          workerData: {
+            data: JSON.stringify({ probes, notifications, isPaused }),
+          },
+        },
+      })
+      .then(() => {
+        bree.run('experimental-probing')
+      })
 
+    return
+  }
+
+  // Else, use the existing logic
+  initializeProbeStates(probes)
   const probeInterval = setInterval(() => {
     if (repeat) {
       const finishedProbe = probes.every((probe) => {

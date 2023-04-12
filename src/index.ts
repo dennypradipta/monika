@@ -68,6 +68,13 @@ class Monika extends Command {
     version: Flags.version({ char: 'v' }),
     help: Flags.boolean({ char: 'h' }),
 
+    'experimental-probing': Flags.boolean({
+      hidden: true,
+      description: 'Probing using Bree',
+      required: false,
+      default: false,
+    }),
+
     symonUrl: Flags.string({
       hidden: false,
       description: 'URL of Symon',
@@ -304,6 +311,13 @@ class Monika extends Command {
           reportLimit: _flags.symonReportLimit,
         })
         await symonClient.initiate()
+      }
+
+      const isExperimentalProbing = Boolean(_flags['experimental-probing'])
+      if (isExperimentalProbing) {
+        log.debug(
+          'DEBUG: Experimental Probing is active, using Bree instead of the usual setInterval()'
+        )
       }
 
       let abortCurrentLooper: (() => void) | undefined

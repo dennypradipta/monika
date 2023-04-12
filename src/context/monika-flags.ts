@@ -7,6 +7,7 @@ export type MonikaFlags = {
   'config-filename': string
   'config-interval': number
   'create-config': boolean
+  'experimental-probing'?: boolean
   flush: boolean
   'follow-redirects': number
   force: boolean
