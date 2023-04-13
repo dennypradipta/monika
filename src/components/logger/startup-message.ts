@@ -1,9 +1,75 @@
+/**********************************************************************************
+ * MIT License                                                                    *
+ *                                                                                *
+ * Copyright (c) 2021 Hyperjump Technology                                        *
+ *                                                                                *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy   *
+ * of this software and associated documentation files (the "Software"), to deal  *
+ * in the Software without restriction, including without limitation the rights   *
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell      *
+ * copies of the Software, and to permit persons to whom the Software is          *
+ * furnished to do so, subject to the following conditions:                       *
+ *                                                                                *
+ * The above copyright notice and this permission notice shall be included in all *
+ * copies or substantial portions of the Software.                                *
+ *                                                                                *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR     *
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,       *
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE    *
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER         *
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,  *
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE  *
+ * SOFTWARE.                                                                      *
+ **********************************************************************************/
+
+import path from 'path'
+import isUrl from 'is-url'
 import boxen from 'boxen'
 import chalk from 'chalk'
 import type { Config } from '../../interfaces/config'
-import type { Notification } from '../../interfaces/notification'
+import type { Notification } from '../notification/channel'
+import { channels } from '../notification/channel'
 import type { Probe, ProbeAlert } from '../../interfaces/probe'
 import type { RequestConfig } from '../../interfaces/request'
+import { log } from '../../utils/pino'
+
+type LogStartupMessage = {
+  config: Config
+  configFlag: string[]
+  isFirstRun: boolean
+  isSymonMode: boolean
+  isVerbose: boolean
+}
+
+export function logStartupMessage({
+  config,
+  configFlag,
+  isFirstRun,
+  isSymonMode,
+  isVerbose,
+}: LogStartupMessage): void {
+  const startupMessage = generateStartupMessage({
+    config,
+    isFirstRun,
+    isSymonMode,
+    isVerbose,
+  })
+
+  if (isSymonMode) {
+    log.info(startupMessage)
+    return
+  }
+
+  for (const x in configFlag) {
+    if (isUrl(configFlag[x])) {
+      log.info('Using remote config:', configFlag[x])
+    } else if (configFlag[x].length > 0) {
+      log.info(`Using config file: ${path.resolve(configFlag[x])}`)
+    }
+  }
+
+  console.log(startupMessage)
+}
 
 type GenerateStartupMessageParams = {
   config: Config
@@ -12,7 +78,7 @@ type GenerateStartupMessageParams = {
   isSymonMode: boolean
 }
 
-export function generateStartupMessage({
+function generateStartupMessage({
   config,
   isFirstRun,
   isVerbose,
@@ -132,40 +198,29 @@ function generateNotificationMessage(notifications: Notification[]): string {
     return ''
   }
 
-  let startupMessage = `\nNotifications:\n`
+  let result = '`\nNotifications:\n`'
 
   for (const notification of notifications) {
-    const { data, id, type } = notification
-
-    startupMessage += `- Notification ID: ${id}
-Type: ${type}
-`
-    // Only show recipients if type is mailgun, smtp, or sendgrid
-    // check one-by-one instead of using indexOf to avoid using type assertion
-    if (type === 'mailgun' || type === 'smtp' || type === 'sendgrid') {
-      startupMessage += `    Recipients: ${data.recipients.join(', ')}\n`
-    }
-
-    switch (type) {
-      case 'smtp':
-        startupMessage += `    Hostname: ${data.hostname}
-Port: ${data.port}
-Username: ${data.username}
-`
-        break
-      case 'mailgun':
-        startupMessage += `    Domain: ${data.domain}\n`
-        break
-      case 'sendgrid':
-        break
-      case 'webhook':
-      case 'slack':
-      case 'lark':
-      case 'google-chat':
-        startupMessage += `    URL: ${data.url}\n`
-        break
-    }
+    result += getIDMessage(notification)
+    result += getAdditionalMessage(notification)
   }
 
-  return startupMessage
+  return result
+}
+
+function getIDMessage({ id, type }: Notification) {
+  return `- Notification ID: ${id}
+Type: ${type}
+`
+}
+
+function getAdditionalMessage(notification: Notification) {
+  const { data, type } = notification
+  const channel = channels[type]
+
+  if (!channel?.additionalStartupMessage) {
+    return ''
+  }
+
+  return channel.additionalStartupMessage(data)
 }
